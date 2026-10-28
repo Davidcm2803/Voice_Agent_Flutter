@@ -10,6 +10,8 @@ import 'package:voice_agent_flutter/ui/theme/app_colors.dart';
 import 'package:voice_agent_flutter/ui/widgets/comic_panel.dart';
 import 'package:voice_agent_flutter/ui/widgets/halftone_background.dart';
 
+enum _Filter { all, code, notes, photos }
+
 class NotebookScreen extends StatefulWidget {
   const NotebookScreen({super.key});
 
@@ -22,8 +24,13 @@ class _NotebookScreenState extends State<NotebookScreen>
   EntryStore? _store;
   List<Entry> _all = [];
   String _query = '';
+  _Filter _filter = _Filter.all;
+  int _tab = 0;
   bool _loading = true;
   Timer? _timer;
+  final Set<String> _selected = {};
+
+  bool get _selecting => _selected.isNotEmpty;
 
   @override
   void initState() {
@@ -60,6 +67,7 @@ class _NotebookScreenState extends State<NotebookScreen>
     setState(() {
       _all = all;
       _loading = false;
+      _selected.removeWhere((id) => !all.any((e) => e.id == id));
     });
   }
 
@@ -68,22 +76,24 @@ class _NotebookScreenState extends State<NotebookScreen>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  Future<void> _add() async {
+  // ---------- Acciones
+
+  Future<void> _add(EntryType type) async {
     final r = await showDialog<EntryEditorResult>(
       context: context,
-      builder: (_) => const EntryEditorDialog(),
+      builder: (_) => EntryEditorDialog(type: type),
     );
     if (r == null) return;
     try {
       await _store!.create(
-        type: EntryType.snippet,
+        type: type,
         title: r.title,
         body: r.body,
-        language: r.language,
-        tags: r.language.isEmpty ? const [] : [r.language],
+        language: r.language.isEmpty ? null : r.language,
+        tags: r.tags,
       );
       await _reload();
-      _toast('Guardado en ${_store!.root.path}');
+      _toast('Fuente guardada');
     } catch (e) {
       _toast('No se pudo guardar: $e');
     }
@@ -99,83 +109,194 @@ class _NotebookScreenState extends State<NotebookScreen>
       await _store!.save(e.copyWith(
         title: r.title,
         body: r.body,
-        language: r.language,
-        tags: r.language.isEmpty ? const [] : [r.language],
+        language: r.language.isEmpty ? null : r.language,
+        tags: r.tags,
         deviceId: _store!.deviceId,
       ));
       await _reload();
-      _toast('Guardado en ${_store!.root.path}');
+      _toast('Cambios guardados');
     } catch (err) {
       _toast('No se pudo guardar: $err');
     }
   }
-  Future<void> _delete(Entry e) async {
-    await _store!.softDelete(e);
-    await _reload();
+
+  Future<bool> _confirm(String text) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('BORRAR'),
+        content: Text(text),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final results = NotebookSearch.search(_all, _query);
+  Future<void> _delete(Entry e) async {
+    if (!await _confirm('¿Borrar "${e.title}"?')) return;
+    await _store!.softDelete(e);
+    await _reload();
+    _toast('Borrado');
+  }
 
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(title: Text('CUADERNO', style: theme.textTheme.titleLarge)),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.red,
-        onPressed: _store == null ? null : _add,
-        child: const Icon(Icons.add, color: AppColors.paper),
+  Future<void> _deleteSelected() async {
+    final items = _all.where((e) => _selected.contains(e.id)).toList();
+    if (items.isEmpty) return;
+    if (!await _confirm('¿Borrar ${items.length} fuente(s)?')) return;
+    for (final e in items) {
+      await _store!.softDelete(e);
+    }
+    setState(_selected.clear);
+    await _reload();
+    _toast('Borradas ${items.length}');
+  }
+
+  void _copy(Entry e) {
+    Clipboard.setData(ClipboardData(text: e.body));
+    _toast('Copiado');
+  }
+
+  void _toggleSelect(Entry e) {
+    setState(() {
+      if (!_selected.remove(e.id)) _selected.add(e.id);
+    });
+  }
+
+  void _showAddMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.panel,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('AGREGAR FUENTE',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900, letterSpacing: 2)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.code, color: AppColors.cyan),
+              title: const Text('Snippet de código'),
+              subtitle: const Text('Docker, PowerShell, bash...'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _add(EntryType.snippet);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.sticky_note_2_outlined,
+                  color: AppColors.cyan),
+              title: const Text('Nota'),
+              subtitle: const Text('Texto libre'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _add(EntryType.note);
+              },
+            ),
+            ListTile(
+              enabled: false,
+              leading: const Icon(Icons.photo_outlined),
+              title: const Text('Foto'),
+              subtitle: const Text('Próximamente'),
+              onTap: () {},
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
-      body: HalftoneBackground(
-        child: SafeArea(
+    );
+  }
+
+  void _openDetail(Entry e) {
+    final theme = Theme.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.panel,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.85,
+          ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 64, 16, 0),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ComicPanel(
-                  shadowColor: AppColors.blue,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: TextField(
-                    onChanged: (v) => setState(() => _query = v),
-                    decoration: const InputDecoration(
-                      hintText: 'Buscar snippets, notas...',
-                      border: InputBorder.none,
-                      icon: Icon(Icons.search, color: AppColors.cyan),
+                Text(_label(e), style: theme.textTheme.labelSmall),
+                const SizedBox(height: 4),
+                Text(e.title, style: theme.textTheme.titleLarge),
+                const SizedBox(height: 4),
+                Text('Actualizado ${_date(e.updatedAt)}',
+                    style: theme.textTheme.labelSmall),
+                if (e.tags.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _TagRow(tags: e.tags),
+                ],
+                const SizedBox(height: 12),
+                Flexible(
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.ink,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        e.body.isEmpty ? '(vacío)' : e.body,
+                        style: TextStyle(
+                          fontFamily:
+                              e.type == EntryType.snippet ? 'monospace' : null,
+                          fontSize: 14,
+                          height: 1.4,
+                          color: AppColors.paper,
+                        ),
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
-                Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : RefreshIndicator(
-                          onRefresh: _reload,
-                          child: ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.only(bottom: 90),
-                            children: results.isEmpty
-                                ? [
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 80),
-                                      child: Center(
-                                        child: Text(
-                                          'Nada por aquí. Pulsa + para guardar.',
-                                          style: theme.textTheme.labelSmall,
-                                        ),
-                                      ),
-                                    ),
-                                  ]
-                                : [
-                                    for (final e in results)
-                                      _EntryCard(
-                                        entry: e,
-                                        onTap: () => _edit(e),
-                                        onDelete: () => _delete(e),
-                                      ),
-                                  ],
-                          ),
-                        ),
+                Row(
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () => _copy(e),
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('COPIAR'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        _edit(e);
+                      },
+                      icon: const Icon(Icons.edit, size: 18),
+                      label: const Text('EDITAR'),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Borrar',
+                      icon: const Icon(Icons.delete_outline,
+                          color: AppColors.red),
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        _delete(e);
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -184,63 +305,376 @@ class _NotebookScreenState extends State<NotebookScreen>
       ),
     );
   }
-}
 
-class _EntryCard extends StatelessWidget {
-  const _EntryCard({
-    required this.entry,
-    required this.onTap,
-    required this.onDelete,
-  });
+  // ---------- Utilidades
 
-  final Entry entry;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
+  static String _label(Entry e) => switch (e.type) {
+        EntryType.snippet => (e.language ?? 'snippet').toUpperCase(),
+        EntryType.note => 'NOTA',
+        EntryType.photo => 'FOTO',
+      };
+
+  static IconData _icon(EntryType t) => switch (t) {
+        EntryType.snippet => Icons.code,
+        EntryType.note => Icons.sticky_note_2_outlined,
+        EntryType.photo => Icons.photo_outlined,
+      };
+
+  static String _date(DateTime d) {
+    final l = d.toLocal();
+    return '${l.day}/${l.month}/${l.year}';
+  }
+
+  List<Entry> _visible() {
+    final found = NotebookSearch.search(_all, _query, limit: 1000);
+    return found.where((e) {
+      switch (_filter) {
+        case _Filter.all:
+          return true;
+        case _Filter.code:
+          return e.type == EntryType.snippet;
+        case _Filter.notes:
+          return e.type == EntryType.note;
+        case _Filter.photos:
+          return e.type == EntryType.photo;
+      }
+    }).toList();
+  }
+
+  // ---------- Pestañas
+
+  Widget _sourcesTab() {
+    final theme = Theme.of(context);
+    final results = _visible();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      child: Column(
+        children: [
+          ComicPanel(
+            shadowColor: AppColors.blue,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: TextField(
+              onChanged: (v) => setState(() => _query = v),
+              decoration: const InputDecoration(
+                hintText: 'Buscar en tus fuentes...',
+                border: InputBorder.none,
+                icon: Icon(Icons.search, color: AppColors.cyan),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final f in _Filter.values)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(switch (f) {
+                        _Filter.all => 'Todo',
+                        _Filter.code => 'Código',
+                        _Filter.notes => 'Notas',
+                        _Filter.photos => 'Fotos',
+                      }),
+                      selected: _filter == f,
+                      onSelected: (_) => setState(() => _filter = f),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${results.length} FUENTE(S)',
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : RefreshIndicator(
+                    onRefresh: _reload,
+                    child: results.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(top: 80),
+                                child: Column(
+                                  children: [
+                                    const Icon(Icons.auto_stories,
+                                        size: 48, color: AppColors.muted),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      _all.isEmpty
+                                          ? 'Tu cuaderno está vacío.\nAgregá tu primera fuente con +'
+                                          : 'No hay resultados.',
+                                      textAlign: TextAlign.center,
+                                      style: theme.textTheme.labelSmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.only(bottom: 96),
+                            itemCount: results.length,
+                            itemBuilder: (_, i) {
+                              final e = results[i];
+                              return _SourceCard(
+                                entry: e,
+                                label: _label(e),
+                                icon: _icon(e.type),
+                                date: _date(e.updatedAt),
+                                selected: _selected.contains(e.id),
+                                onTap: () => _selecting
+                                    ? _toggleSelect(e)
+                                    : _openDetail(e),
+                                onLongPress: () => _toggleSelect(e),
+                              );
+                            },
+                          ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _studioTab() {
+    final theme = Theme.of(context);
+    const tools = [
+      (Icons.summarize_outlined, 'Resumen', 'Un repaso corto de tus fuentes'),
+      (Icons.quiz_outlined, 'Preguntas de estudio',
+          'Para repasar tus notas'),
+      (Icons.list_alt, 'Índice de snippets', 'Todo tu código por tema'),
+      (Icons.hub_outlined, 'Mapa de etiquetas', 'Cómo se conectan tus fuentes'),
+    ];
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        for (final t in tools)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: GestureDetector(
+              onTap: () => _toast('${t.$2}: próximamente'),
+              child: ComicPanel(
+                shadowColor: AppColors.red,
+                child: Row(
+                  children: [
+                    Icon(t.$1, color: AppColors.cyan, size: 30),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(t.$2.toUpperCase(),
+                              style: theme.textTheme.labelSmall),
+                          const SizedBox(height: 2),
+                          Text(t.$3, style: theme.textTheme.bodyLarge),
+                        ],
+                      ),
+                    ),
+                    Text('PRONTO', style: theme.textTheme.labelSmall),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    return PopScope(
+      canPop: !_selecting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selecting) setState(_selected.clear);
+      },
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          leading: _selecting
+              ? IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(_selected.clear),
+                )
+              : null,
+          title: Text(
+            _selecting ? '${_selected.length} SELECCIONADA(S)' : 'CUADERNO',
+            style: theme.textTheme.titleLarge,
+          ),
+          actions: [
+            if (_selecting)
+              IconButton(
+                tooltip: 'Borrar seleccionadas',
+                icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                onPressed: _deleteSelected,
+              ),
+          ],
+        ),
+        floatingActionButton: _tab == 0 && !_selecting
+            ? FloatingActionButton.extended(
+                backgroundColor: AppColors.red,
+                foregroundColor: AppColors.paper,
+                onPressed: _store == null ? null : _showAddMenu,
+                icon: const Icon(Icons.add),
+                label: const Text('AGREGAR'),
+              )
+            : null,
+        bottomNavigationBar: NavigationBar(
+          backgroundColor: AppColors.night,
+          selectedIndex: _tab,
+          onDestinationSelected: (i) => setState(() {
+            _tab = i;
+            _selected.clear();
+          }),
+          destinations: const [
+            NavigationDestination(
+                icon: Icon(Icons.library_books_outlined),
+                selectedIcon: Icon(Icons.library_books),
+                label: 'Fuentes'),
+            NavigationDestination(
+                icon: Icon(Icons.auto_awesome_outlined),
+                selectedIcon: Icon(Icons.auto_awesome),
+                label: 'Studio'),
+          ],
+        ),
+        body: HalftoneBackground(
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 56),
+              child: IndexedStack(
+                index: _tab,
+                children: [_sourcesTab(), _studioTab()],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TagRow extends StatelessWidget {
+  const _TagRow({required this.tags});
+
+  final List<String> tags;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final t in tags)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.blue.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.cyan, width: 1),
+            ),
+            child: Text(
+              t,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.paper,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _SourceCard extends StatelessWidget {
+  const _SourceCard({
+    required this.entry,
+    required this.label,
+    required this.icon,
+    required this.date,
+    required this.selected,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final Entry entry;
+  final String label;
+  final IconData icon;
+  final String date;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isCode = entry.type == EntryType.snippet;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: GestureDetector(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: ComicPanel(
-          shadowColor: AppColors.red,
-          child: Column(
+          color: selected ? AppColors.blue : AppColors.panel,
+          shadowColor: selected ? AppColors.cyan : AppColors.red,
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${(entry.language ?? entry.type.name).toUpperCase()}  ·  ${entry.title}',
-                      style: theme.textTheme.labelSmall,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Copiar',
-                    icon: const Icon(Icons.copy,
-                        size: 18, color: AppColors.cyan),
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: entry.body));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Copiado')));
-                    },
-                  ),
-                  IconButton(
-                    tooltip: 'Borrar',
-                    icon: const Icon(Icons.delete_outline,
-                        size: 18, color: AppColors.muted),
-                    onPressed: onDelete,
-                  ),
-                ],
+              Icon(
+                selected ? Icons.check_circle : icon,
+                color: AppColors.cyan,
+                size: 26,
               ),
-              Text(
-                entry.body,
-                maxLines: 6,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('$label  ·  $date', style: theme.textTheme.labelSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      entry.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    if (entry.body.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        entry.body,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: isCode ? 'monospace' : null,
+                          fontSize: 13,
+                          color: AppColors.paper.withValues(alpha: 0.75),
+                        ),
+                      ),
+                    ],
+                    if (entry.tags.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _TagRow(tags: entry.tags.take(4).toList()),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),

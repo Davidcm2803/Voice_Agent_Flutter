@@ -37,6 +37,8 @@ dependencies:
   path_provider: ^2.1.6
   permission_handler: ^13.0.2
   litertlm: ^0.0.14
+  speech_to_text: ^7.5.0
+  flutter_tts: ^4.2.5
 
 dev_dependencies:
   flutter_test:
