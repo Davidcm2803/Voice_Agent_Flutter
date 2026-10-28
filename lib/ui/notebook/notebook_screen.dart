@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:voice_agent_flutter/notebook/data/entry_store.dart';
 import 'package:voice_agent_flutter/notebook/data/notebook_search.dart';
 import 'package:voice_agent_flutter/notebook/models/entry.dart';
 import 'package:voice_agent_flutter/ui/notebook/entry_editor_dialog.dart';
+import 'package:voice_agent_flutter/ui/notebook/import_flow.dart';
 import 'package:voice_agent_flutter/ui/theme/app_colors.dart';
 import 'package:voice_agent_flutter/ui/widgets/comic_panel.dart';
 import 'package:voice_agent_flutter/ui/widgets/halftone_background.dart';
@@ -172,6 +174,85 @@ class _NotebookScreenState extends State<NotebookScreen>
     });
   }
 
+  Future<void> _importDocument() async {
+    final store = _store;
+    if (store == null) return;
+    final msg = await ImportFlow.document(context, store);
+    if (!mounted) return;
+    await _reload();
+    if (msg != null) _toast(msg);
+  }
+
+  Future<void> _importPhoto() async {
+    final store = _store;
+    if (store == null) return;
+    final msg = await ImportFlow.photo(context, store);
+    if (!mounted) return;
+    await _reload();
+    if (msg != null) _toast(msg);
+  }
+
+  bool _studyReady(String name) =>
+      name == 'Resumen' || name == 'Preguntas de estudio';
+
+  /// Elige una fuente y devuelve el pedido al chat (que responde con el RAG).
+  Future<void> _studioAction(String name) async {
+    if (!_studyReady(name)) {
+      _toast('$name: próximamente');
+      return;
+    }
+    final sources = _all
+        .where((e) => e.body.trim().isNotEmpty && e.type != EntryType.photo)
+        .toList();
+    if (sources.isEmpty) {
+      _toast('Agregá una fuente primero');
+      return;
+    }
+    final chosen = await showModalBottomSheet<Entry>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.panel,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.7,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('ELEGÍ UNA FUENTE',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final e in sources)
+                      ListTile(
+                        leading: Icon(_icon(e.type), color: AppColors.cyan),
+                        title: Text(e.title,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text('${e.body.length} caracteres'),
+                        onTap: () => Navigator.of(ctx).pop(e),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    final prompt = name == 'Resumen'
+        ? 'Hazme un resumen de «${chosen.title}» del cuaderno.'
+        : 'Hazme 5 preguntas de estudio con su respuesta sobre «${chosen.title}» del cuaderno.';
+    Navigator.of(context).pop(prompt);
+  }
+
   void _showAddMenu() {
     showModalBottomSheet<void>(
       context: context,
@@ -206,11 +287,23 @@ class _NotebookScreenState extends State<NotebookScreen>
               },
             ),
             ListTile(
-              enabled: false,
-              leading: const Icon(Icons.photo_outlined),
+              leading: const Icon(Icons.description_outlined,
+                  color: AppColors.cyan),
+              title: const Text('Documento'),
+              subtitle: const Text('Word, PDF o texto'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _importDocument();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_outlined, color: AppColors.cyan),
               title: const Text('Foto'),
-              subtitle: const Text('Próximamente'),
-              onTap: () {},
+              subtitle: const Text('Con descripción para que Axel la encuentre'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _importPhoto();
+              },
             ),
             const SizedBox(height: 8),
           ],
@@ -247,6 +340,22 @@ class _NotebookScreenState extends State<NotebookScreen>
                   _TagRow(tags: e.tags),
                 ],
                 const SizedBox(height: 12),
+                if (e.type == EntryType.photo && e.attachment != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(
+                      File('${_store!.attachments.path}/${e.attachment}'),
+                      height: 220,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stack) => const SizedBox(
+                        height: 60,
+                        child: Center(child: Text('(no encuentro la imagen)')),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Flexible(
                   child: Container(
                     width: double.infinity,
@@ -257,7 +366,11 @@ class _NotebookScreenState extends State<NotebookScreen>
                     ),
                     child: SingleChildScrollView(
                       child: SelectableText(
-                        e.body.isEmpty ? '(vacío)' : e.body,
+                        e.body.isEmpty
+                            ? '(vacío)'
+                            : e.body.length > 20000
+                                ? '${e.body.substring(0, 20000)}\n\n... (${e.body.length} caracteres en total; COPIAR copia todo)'
+                                : e.body,
                         style: TextStyle(
                           fontFamily:
                               e.type == EntryType.snippet ? 'monospace' : null,
@@ -466,7 +579,7 @@ class _NotebookScreenState extends State<NotebookScreen>
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
             child: GestureDetector(
-              onTap: () => _toast('${t.$2}: próximamente'),
+              onTap: () => _studioAction(t.$2),
               child: ComicPanel(
                 shadowColor: AppColors.red,
                 child: Row(
@@ -484,7 +597,7 @@ class _NotebookScreenState extends State<NotebookScreen>
                         ],
                       ),
                     ),
-                    Text('PRONTO', style: theme.textTheme.labelSmall),
+                    Text(_studyReady(t.$2) ? 'LISTO' : 'PRONTO', style: theme.textTheme.labelSmall),
                   ],
                 ),
               ),

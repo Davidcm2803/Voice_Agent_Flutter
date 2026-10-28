@@ -5,7 +5,11 @@ import 'package:voice_agent_flutter/core/persona_modules.dart';
 import 'package:voice_agent_flutter/llm/llm_provider.dart';
 import 'package:voice_agent_flutter/llm/providers/litert_provider.dart';
 import 'package:voice_agent_flutter/notebook/data/entry_store.dart';
+import 'package:voice_agent_flutter/notebook/data/note_command.dart';
 import 'package:voice_agent_flutter/notebook/data/notebook_rag.dart';
+import 'package:voice_agent_flutter/notebook/data/notebook_search.dart';
+import 'package:voice_agent_flutter/notebook/models/entry.dart';
+import 'package:voice_agent_flutter/ui/notebook/import_flow.dart';
 import 'package:voice_agent_flutter/ui/notebook/notebook_screen.dart';
 import 'package:voice_agent_flutter/ui/settings/settings_screen.dart';
 import 'package:voice_agent_flutter/ui/theme/app_colors.dart';
@@ -35,6 +39,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loadingModel = true;
   bool _listening = false;
   bool _voiceSent = false;
+  bool _awaitingNote = false;
   String? _loadError;
   Future<void>? _loadFuture;
 
@@ -91,6 +96,13 @@ class _ChatScreenState extends State<ChatScreen> {
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// Mensaje de Axel que no pasa por el modelo (acciones reales de la app).
+  void _say(String text) {
+    if (!mounted) return;
+    setState(() => _messages.add(ChatMessage.assistant(text)));
+    _tts.speak(text);
   }
 
   // ---------- Voz de salida: habla frase por frase mientras llega el texto
@@ -167,6 +179,108 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  // ---------- Adjuntar documentos y fotos
+
+  void _showAttachMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.panel,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('ADJUNTAR AL CUADERNO',
+                  style:
+                      TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2)),
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.description_outlined, color: AppColors.cyan),
+              title: const Text('Documento'),
+              subtitle: const Text('Word, PDF o texto'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _importDocument();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_outlined, color: AppColors.cyan),
+              title: const Text('Foto'),
+              subtitle: const Text('Con descripción para que Axel la encuentre'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _importPhoto();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importDocument() async {
+    try {
+      final store = await EntryStore.open();
+      if (!mounted) return;
+      final msg = await ImportFlow.document(context, store);
+      if (msg != null) _say(msg);
+    } catch (e) {
+      _say('No pude abrir el cuaderno: $e');
+    }
+  }
+
+  Future<void> _importPhoto() async {
+    try {
+      final store = await EntryStore.open();
+      if (!mounted) return;
+      final msg = await ImportFlow.photo(context, store);
+      if (msg != null) _say(msg);
+    } catch (e) {
+      _say('No pude abrir el cuaderno: $e');
+    }
+  }
+
+  // ---------- Notas por comando (acción real, sin pasar por el modelo)
+
+  Future<String?> _handleLocal(String text) async {
+    final n = NotebookSearch.normalize(text.trim());
+
+    if (_awaitingNote) {
+      _awaitingNote = false;
+      if (RegExp(r'^(cancela|cancelar|olvidalo|dejalo|nada|no)\b').hasMatch(n)) {
+        return 'Dale, no guardo nada.';
+      }
+      final content = NoteCommands.cleanContent(text);
+      return _saveNote(content.isEmpty ? text.trim() : content);
+    }
+
+    final cmd = NoteCommands.parse(text);
+    if (cmd == null) return null;
+    if (cmd.content == null) {
+      _awaitingNote = true;
+      return 'Dale mae, ¿qué querés que diga la nota?';
+    }
+    return _saveNote(cmd.content!);
+  }
+
+  Future<String> _saveNote(String content) async {
+    try {
+      final store = await EntryStore.open();
+      final e = await store.create(
+        type: EntryType.note,
+        title: NoteCommands.titleFor(content),
+        body: content,
+        tags: const ['chat'],
+      );
+      return 'Listo, guardé la nota «${e.title}» en tu cuaderno.';
+    } catch (err) {
+      return 'No pude guardar la nota: $err';
+    }
+  }
+
   // ---------- Envío
 
   Future<void> _send() async {
@@ -175,6 +289,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _input.clear();
     await _tts.stop();
     _speechBuf.clear();
+
+    final local = await _handleLocal(text);
+    if (local != null) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(ChatMessage.user(text));
+        _messages.add(ChatMessage.assistant(local));
+      });
+      _tts.speak(local);
+      return;
+    }
 
     setState(() {
       _messages.add(ChatMessage.user(text));
@@ -240,9 +365,21 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _newChat() async {
     await _tts.stop();
     _speechBuf.clear();
+    _awaitingNote = false;
     await _llm.resetConversation();
     if (!mounted) return;
     setState(() => _messages.clear());
+  }
+
+  Future<void> _openNotebook() async {
+    final prompt = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const NotebookScreen()),
+    );
+    // Studio devuelve un pedido (resumen, preguntas de estudio) para el chat.
+    if (prompt != null && prompt.isNotEmpty && mounted) {
+      _input.text = prompt;
+      _send();
+    }
   }
 
   Widget _emptyArea() {
@@ -281,9 +418,7 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             tooltip: 'Cuaderno',
             icon: const Icon(Icons.menu_book),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const NotebookScreen()),
-            ),
+            onPressed: _openNotebook,
           ),
           IconButton(
             tooltip: 'Ajustes',
@@ -317,6 +452,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 listening: _listening,
                 onSend: _send,
                 onMic: _toggleMic,
+                onAttach: _showAttachMenu,
               ),
             ],
           ),
@@ -404,6 +540,7 @@ class _InputBar extends StatelessWidget {
     required this.listening,
     required this.onSend,
     required this.onMic,
+    required this.onAttach,
   });
 
   final TextEditingController controller;
@@ -411,6 +548,7 @@ class _InputBar extends StatelessWidget {
   final bool listening;
   final VoidCallback onSend;
   final VoidCallback onMic;
+  final VoidCallback onAttach;
 
   @override
   Widget build(BuildContext context) {
@@ -440,6 +578,11 @@ class _InputBar extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Adjuntar documento o foto',
+                    icon: const Icon(Icons.attach_file, color: AppColors.muted),
+                    onPressed: onAttach,
+                  ),
+                  IconButton(
                     tooltip: listening ? 'Detener' : 'Hablar',
                     icon: Icon(
                       listening ? Icons.stop_circle : Icons.mic,
@@ -454,6 +597,7 @@ class _InputBar extends StatelessWidget {
           const SizedBox(width: 14),
           GestureDetector(
             onTap: busy ? null : onSend,
+            onLongPress: onAttach,
             child: ComicPanel(
               color: busy ? AppColors.muted : AppColors.red,
               shadowColor: AppColors.paper,
