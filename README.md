@@ -1,6 +1,6 @@
 # Axel Agent · Voice_Agent_Flutter
 
-Asistente personal de voz y **cuaderno inteligente** privado, hecho con Flutter/Dart.
+Asistente personal de voz y **cuaderno inteligente parecido a noteboke llm pero mas cool** privado, hecho con Flutter/Dart.
 Uso personal, presupuesto **0 colones**, modelos locales primero, español primero.
 
 ## Dos mitades
