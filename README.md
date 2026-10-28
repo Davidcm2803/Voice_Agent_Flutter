@@ -1,11 +1,11 @@
-# Axel Agent · Voice_Agent_Flutter
+# Axel Agent · Voice_Agent_Flutter RAG-LLM Implementation
 
 Asistente personal de voz y **cuaderno inteligente parecido a noteboke llm pero mas cool** privado, hecho con Flutter/Dart.
-Uso personal, presupuesto **0 colones**, modelos locales primero, español primero.
+Uso personal,Usando LLM y RAG para documentos guardados con Syncthing-Fork
 
 ## Dos mitades
 
-1. **Asistente**: chat tipo ChatGPT, voz ("Hey Axel"), herramientas (alarmas, abrir apps, YouTube, WhatsApp con confirmación) y control de otros dispositivos.
+1. **Asistente de voz y chat**: chat tipo ChatGPT, voz ("Hey Axel"), herramientas (alarmas, abrir apps, YouTube, WhatsApp con confirmación) y control de otros dispositivos.
 2. **Cuaderno (tipo NotebookLM privado)**: snippets de Docker/PowerShell, notas y fotos importantes, sincronizados entre mis dispositivos. El LLM consulta el cuaderno para responder.
 
 ## Dispositivos
