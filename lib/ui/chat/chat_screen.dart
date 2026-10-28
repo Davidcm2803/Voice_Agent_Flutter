@@ -6,6 +6,7 @@ import 'package:voice_agent_flutter/llm/providers/echo_provider.dart';
 import 'package:voice_agent_flutter/ui/settings/settings_screen.dart';
 import 'package:voice_agent_flutter/ui/theme/app_colors.dart';
 import 'package:voice_agent_flutter/ui/widgets/comic_panel.dart';
+import 'package:voice_agent_flutter/ui/notebook/notebook_screen.dart';
 import 'package:voice_agent_flutter/ui/widgets/empty_state.dart';
 import 'package:voice_agent_flutter/ui/widgets/halftone_background.dart';
 
@@ -87,6 +88,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.menu_book),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const NotebookScreen()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.tune),
             onPressed: () => Navigator.of(context).push(
@@ -199,7 +206,7 @@ class _InputBar extends StatelessWidget {
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => onSend(),
                       decoration: const InputDecoration(
-                        hintText: 'HÃ¡blale a Axel...',
+                        hintText: 'Axel esta esperando...',
                         border: InputBorder.none,
                       ),
                     ),
