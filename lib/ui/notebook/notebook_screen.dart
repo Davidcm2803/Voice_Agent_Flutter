@@ -63,20 +63,30 @@ class _NotebookScreenState extends State<NotebookScreen>
     });
   }
 
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   Future<void> _add() async {
     final r = await showDialog<EntryEditorResult>(
       context: context,
       builder: (_) => const EntryEditorDialog(),
     );
     if (r == null) return;
-    await _store!.create(
-      type: EntryType.snippet,
-      title: r.title,
-      body: r.body,
-      language: r.language,
-      tags: r.language.isEmpty ? const [] : [r.language],
-    );
-    await _reload();
+    try {
+      await _store!.create(
+        type: EntryType.snippet,
+        title: r.title,
+        body: r.body,
+        language: r.language,
+        tags: r.language.isEmpty ? const [] : [r.language],
+      );
+      await _reload();
+      _toast('Guardado en ${_store!.root.path}');
+    } catch (e) {
+      _toast('No se pudo guardar: $e');
+    }
   }
 
   Future<void> _edit(Entry e) async {
@@ -85,16 +95,20 @@ class _NotebookScreenState extends State<NotebookScreen>
       builder: (_) => EntryEditorDialog(entry: e),
     );
     if (r == null) return;
-    await _store!.save(e.copyWith(
-      title: r.title,
-      body: r.body,
-      language: r.language,
-      tags: r.language.isEmpty ? const [] : [r.language],
-      deviceId: _store!.deviceId,
-    ));
-    await _reload();
+    try {
+      await _store!.save(e.copyWith(
+        title: r.title,
+        body: r.body,
+        language: r.language,
+        tags: r.language.isEmpty ? const [] : [r.language],
+        deviceId: _store!.deviceId,
+      ));
+      await _reload();
+      _toast('Guardado en ${_store!.root.path}');
+    } catch (err) {
+      _toast('No se pudo guardar: $err');
+    }
   }
-
   Future<void> _delete(Entry e) async {
     await _store!.softDelete(e);
     await _reload();

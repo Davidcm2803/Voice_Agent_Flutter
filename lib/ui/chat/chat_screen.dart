@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:voice_agent_flutter/core/axel_persona.dart';
 import 'package:voice_agent_flutter/core/config.dart';
 import 'package:voice_agent_flutter/llm/llm_provider.dart';
-import 'package:voice_agent_flutter/llm/providers/echo_provider.dart';
+import 'package:voice_agent_flutter/llm/providers/litert_provider.dart';
+import 'package:voice_agent_flutter/ui/notebook/notebook_screen.dart';
 import 'package:voice_agent_flutter/ui/settings/settings_screen.dart';
 import 'package:voice_agent_flutter/ui/theme/app_colors.dart';
 import 'package:voice_agent_flutter/ui/widgets/comic_panel.dart';
-import 'package:voice_agent_flutter/ui/notebook/notebook_screen.dart';
 import 'package:voice_agent_flutter/ui/widgets/empty_state.dart';
 import 'package:voice_agent_flutter/ui/widgets/halftone_background.dart';
 
@@ -18,7 +18,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final LlmProvider _llm = EchoProvider(); // TODO: inyectar proveedor real
+  final LiteRtProvider _llm = LiteRtProvider();
   final List<ChatMessage> _messages = [];
   final TextEditingController _input = TextEditingController();
   bool _busy = false;
@@ -28,6 +28,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _input.dispose();
     _llm.dispose();
     super.dispose();
+  }
+
+  void _setLast(String text) {
+    if (!mounted) return;
+    setState(() {
+      _messages[_messages.length - 1] = ChatMessage.assistant(text);
+    });
   }
 
   Future<void> _send() async {
@@ -45,32 +52,36 @@ class _ChatScreenState extends State<ChatScreen> {
     final buffer = StringBuffer();
 
     try {
+      if (!_llm.isLoaded) {
+        _setLast('Cargando a Gemma... la primera vez tarda un poco.');
+        await _llm.load();
+        _setLast('');
+      }
+
       await for (final chunk in _llm.generate([
         const ChatMessage.system(AxelPersona.systemPrompt),
         ...history,
       ])) {
         buffer.write(chunk);
-        if (!mounted) return;
-        setState(() {
-          _messages[_messages.length - 1] =
-              ChatMessage.assistant(buffer.toString());
-        });
+        _setLast(buffer.toString());
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _messages[_messages.length - 1] =
-              ChatMessage.assistant('Error: $e');
-        });
-      }
+      final msg = e is StateError ? e.message : '$e';
+      _setLast(buffer.isEmpty ? 'Error: $msg' : '${buffer.toString()}\n\n[$msg]');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
+  Future<void> _newChat() async {
+    await _llm.resetConversation();
+    if (!mounted) return;
+    setState(() => _messages.clear());
+  }
+
   void _comingSoon(String what) {
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$what: prÃ³ximamente')));
+        .showSnackBar(SnackBar(content: Text('$what: próximamente')));
   }
 
   @override
@@ -89,12 +100,19 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'Chat nuevo',
+            icon: const Icon(Icons.add_comment_outlined),
+            onPressed: _busy ? null : _newChat,
+          ),
+          IconButton(
+            tooltip: 'Cuaderno',
             icon: const Icon(Icons.menu_book),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const NotebookScreen()),
             ),
           ),
           IconButton(
+            tooltip: 'Ajustes',
             icon: const Icon(Icons.tune),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
@@ -133,7 +151,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-
 class _Bubble extends StatelessWidget {
   const _Bubble({required this.message});
 
@@ -158,9 +175,9 @@ class _Bubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(isUser ? 'TÃš' : 'AXEL', style: theme.textTheme.labelSmall),
+                Text(isUser ? 'TÚ' : 'AXEL', style: theme.textTheme.labelSmall),
                 const SizedBox(height: 4),
-                Text(
+                SelectableText(
                   message.content.isEmpty ? '...' : message.content,
                   style: theme.textTheme.bodyLarge,
                 ),
@@ -206,7 +223,7 @@ class _InputBar extends StatelessWidget {
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => onSend(),
                       decoration: const InputDecoration(
-                        hintText: 'Axel esta esperando...',
+                        hintText: 'Axel la está chilleando...',
                         border: InputBorder.none,
                       ),
                     ),
