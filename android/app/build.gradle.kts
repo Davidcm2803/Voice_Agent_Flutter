@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "cr.tunombre.voice_agent_flutter"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

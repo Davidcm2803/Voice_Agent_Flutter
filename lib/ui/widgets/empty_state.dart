@@ -24,7 +24,7 @@ class EmptyState extends StatelessWidget {
               Image.asset(
                 logoAsset,
                 width: 200,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
               const SizedBox(height: 10),
               Text('AXEL AGENT', style: theme.textTheme.headlineMedium),
