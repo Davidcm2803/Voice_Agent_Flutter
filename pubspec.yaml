@@ -36,6 +36,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   path_provider: ^2.1.6
   permission_handler: ^13.0.2
+  litertlm: ^0.0.14
+  speech_to_text: ^7.5.0
+  flutter_tts: ^4.2.5
+  file_picker: ^13.3.0
+  archive: ^4.5.2
+  syncfusion_flutter_pdf: ^35.1.42
 
 dev_dependencies:
   flutter_test:

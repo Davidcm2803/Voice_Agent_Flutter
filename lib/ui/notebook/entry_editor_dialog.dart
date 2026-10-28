@@ -7,19 +7,27 @@ class EntryEditorResult {
     required this.title,
     required this.language,
     required this.body,
+    required this.tags,
   });
 
   final String title;
+
+  /// Vacío para las notas.
   final String language;
   final String body;
+
+  /// Etiquetas ya limpias (incluye el lenguaje si es snippet).
+  final List<String> tags;
 }
 
-/// Crea o edita un snippet. Es dueño de sus controladores, por eso
-/// no falla al cerrarse (el bug anterior).
+/// Crea o edita un snippet o una nota. Es dueño de sus controladores.
 class EntryEditorDialog extends StatefulWidget {
-  const EntryEditorDialog({super.key, this.entry});
+  const EntryEditorDialog({super.key, this.entry, this.type});
 
   final Entry? entry;
+
+  /// Tipo para una entrada nueva (si [entry] es null).
+  final EntryType? type;
 
   @override
   State<EntryEditorDialog> createState() => _EntryEditorDialogState();
@@ -28,15 +36,24 @@ class EntryEditorDialog extends StatefulWidget {
 class _EntryEditorDialogState extends State<EntryEditorDialog> {
   late final TextEditingController _title;
   late final TextEditingController _lang;
+  late final TextEditingController _tags;
   late final TextEditingController _body;
+  late final bool _isSnippet;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     final e = widget.entry;
+    final type = e?.type ?? widget.type ?? EntryType.snippet;
+    _isSnippet = type == EntryType.snippet;
     _title = TextEditingController(text: e?.title ?? '');
-    _lang = TextEditingController(text: e?.language ?? 'powershell');
+    _lang = TextEditingController(
+        text: e?.language ?? (_isSnippet ? 'powershell' : ''));
+    final extra = (e?.tags ?? const <String>[])
+        .where((t) => t != e?.language)
+        .join(', ');
+    _tags = TextEditingController(text: extra);
     _body = TextEditingController(text: e?.body ?? '');
   }
 
@@ -44,6 +61,7 @@ class _EntryEditorDialogState extends State<EntryEditorDialog> {
   void dispose() {
     _title.dispose();
     _lang.dispose();
+    _tags.dispose();
     _body.dispose();
     super.dispose();
   }
@@ -54,20 +72,29 @@ class _EntryEditorDialogState extends State<EntryEditorDialog> {
       setState(() => _error = 'Pon un título');
       return;
     }
+    final lang = _isSnippet ? _lang.text.trim().toLowerCase() : '';
+    final tags = <String>[];
+    if (lang.isNotEmpty) tags.add(lang);
+    for (final t in _tags.text.split(',')) {
+      final c = t.trim().toLowerCase();
+      if (c.isNotEmpty && !tags.contains(c)) tags.add(c);
+    }
     Navigator.of(context).pop(EntryEditorResult(
       title: title,
-      language: _lang.text.trim().toLowerCase(),
+      language: lang,
       body: _body.text,
+      tags: tags,
     ));
   }
 
   @override
   Widget build(BuildContext context) {
     final editing = widget.entry != null;
+    final what = _isSnippet ? 'SNIPPET' : 'NOTA';
 
     return AlertDialog(
       backgroundColor: AppColors.panel,
-      title: Text(editing ? 'EDITAR SNIPPET' : 'NUEVO SNIPPET'),
+      title: Text(editing ? 'EDITAR $what' : 'NUEVO $what'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -79,18 +106,29 @@ class _EntryEditorDialogState extends State<EntryEditorDialog> {
                 errorText: _error,
               ),
             ),
+            if (_isSnippet)
+              TextField(
+                controller: _lang,
+                decoration: const InputDecoration(
+                  labelText: 'Lenguaje (docker, powershell...)',
+                ),
+              ),
             TextField(
-              controller: _lang,
+              controller: _tags,
               decoration: const InputDecoration(
-                labelText: 'Lenguaje (docker, powershell...)',
+                labelText: 'Etiquetas (separadas por coma)',
               ),
             ),
             TextField(
               controller: _body,
-              minLines: 4,
-              maxLines: 10,
-              style: const TextStyle(fontFamily: 'monospace'),
-              decoration: const InputDecoration(labelText: 'Código'),
+              minLines: 5,
+              maxLines: 12,
+              style: _isSnippet
+                  ? const TextStyle(fontFamily: 'monospace')
+                  : null,
+              decoration: InputDecoration(
+                labelText: _isSnippet ? 'Código' : 'Contenido',
+              ),
             ),
           ],
         ),

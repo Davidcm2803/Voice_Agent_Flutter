@@ -1,9 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+        <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService"/></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
+    </queries>
     <application
         android:label="Axel Agent"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <uses-native-library android:name="libOpenCL.so" android:required="false"/>
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"
